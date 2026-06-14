@@ -1,0 +1,188 @@
+# IICPC Arena — Kubernetes deployment.
+#
+# Maps 1:1 onto the compose topology. Notes:
+#   * gateway and ingester are stateless Deployments; botfleet scales via HPA.
+#   * The orchestrator drives sandboxes through a docker:dind sidecar
+#     (DOCKER_HOST=tcp://localhost:2375). For production swap to Kubernetes
+#     Jobs with a gVisor (runsc) RuntimeClass — see ARCHITECTURE.md
+#     "Isolation"; DinD keeps the demo self-contained on any cluster.
+#   * Submissions volume is a RWX PVC shared by gateway + orchestrator.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: arena
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: submissions, namespace: arena }
+spec:
+  accessModes: [ReadWriteMany]
+  resources: { requests: { storage: 10Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: redis, namespace: arena }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: redis } }
+  template:
+    metadata: { labels: { app: redis } }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports: [{ containerPort: 6379 }]
+          resources: { requests: { cpu: 250m, memory: 256Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: redis, namespace: arena }
+spec:
+  selector: { app: redis }
+  ports: [{ port: 6379 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: { name: timescaledb, namespace: arena }
+spec:
+  serviceName: timescaledb
+  replicas: 1
+  selector: { matchLabels: { app: timescaledb } }
+  template:
+    metadata: { labels: { app: timescaledb } }
+    spec:
+      containers:
+        - name: timescaledb
+          image: timescale/timescaledb:latest-pg16
+          env:
+            - { name: POSTGRES_USER, value: arena }
+            - { name: POSTGRES_DB, value: arena }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: arena-pg, key: password } }
+          ports: [{ containerPort: 5432 }]
+          volumeMounts: [{ name: pgdata, mountPath: /var/lib/postgresql/data }]
+  volumeClaimTemplates:
+    - metadata: { name: pgdata }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 20Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: timescaledb, namespace: arena }
+spec:
+  selector: { app: timescaledb }
+  ports: [{ port: 5432 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: gateway, namespace: arena }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: gateway } }
+  template:
+    metadata: { labels: { app: gateway } }
+    spec:
+      containers:
+        - name: gateway
+          image: ghcr.io/iicpc/arena:latest # target: runtime
+          command: [/bin/gateway]
+          env:
+            - { name: REDIS_ADDR, value: "redis:6379" }
+            - { name: DATA_DIR, value: /data/submissions }
+            - { name: WEB_DIR, value: /web }
+          ports: [{ containerPort: 8090 }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8090 }
+          volumeMounts: [{ name: submissions, mountPath: /data/submissions }]
+      volumes:
+        - name: submissions
+          persistentVolumeClaim: { claimName: submissions }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: gateway, namespace: arena }
+spec:
+  type: LoadBalancer
+  selector: { app: gateway }
+  ports: [{ port: 80, targetPort: 8090 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: orchestrator, namespace: arena }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: orchestrator } }
+  template:
+    metadata: { labels: { app: orchestrator } }
+    spec:
+      containers:
+        - name: orchestrator
+          image: ghcr.io/iicpc/arena:latest # target: orchestrator-runtime
+          command: [/bin/orchestrator]
+          env:
+            - { name: REDIS_ADDR, value: "redis:6379" }
+            - { name: DATA_DIR, value: /data/submissions }
+            - { name: ARENA_NET, value: arena-net }
+            - { name: DOCKER_HOST, value: "tcp://localhost:2375" }
+          volumeMounts: [{ name: submissions, mountPath: /data/submissions }]
+        - name: dind
+          image: docker:27-dind
+          securityContext: { privileged: true } # demo only; prod = gVisor Jobs
+          env: [{ name: DOCKER_TLS_CERTDIR, value: "" }]
+          volumeMounts: [{ name: dind-storage, mountPath: /var/lib/docker }]
+      volumes:
+        - name: submissions
+          persistentVolumeClaim: { claimName: submissions }
+        - name: dind-storage
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: botfleet, namespace: arena }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: botfleet } }
+  template:
+    metadata: { labels: { app: botfleet } }
+    spec:
+      containers:
+        - name: botfleet
+          image: ghcr.io/iicpc/arena:latest
+          command: [/bin/botfleet]
+          env: [{ name: REDIS_ADDR, value: "redis:6379" }]
+          resources:
+            requests: { cpu: 500m, memory: 256Mi }
+            limits: { cpu: "2", memory: 1Gi }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: botfleet, namespace: arena }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: botfleet }
+  minReplicas: 2
+  maxReplicas: 32
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: ingester, namespace: arena }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: ingester } }
+  template:
+    metadata: { labels: { app: ingester } }
+    spec:
+      containers:
+        - name: ingester
+          image: ghcr.io/iicpc/arena:latest
+          command: [/bin/ingester]
+          env:
+            - { name: REDIS_ADDR, value: "redis:6379" }
+            - name: PG_DSN
+              valueFrom: { secretKeyRef: { name: arena-pg, key: dsn } }

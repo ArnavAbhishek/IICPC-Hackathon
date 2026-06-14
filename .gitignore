@@ -1,0 +1,7 @@
+/bin/
+*.tar.gz
+.env
+*.original.md
+
+# stray compiled sample binary
+examples/reference-engine/refengine

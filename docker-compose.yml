@@ -1,0 +1,83 @@
+name: arena
+
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: arena
+      POSTGRES_PASSWORD: arena
+      POSTGRES_DB: arena
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  gateway:
+    build: { context: ., target: runtime }
+    command: /bin/gateway
+    environment:
+      REDIS_ADDR: redis:6379
+      DATA_DIR: /data/submissions
+      WEB_DIR: /web
+      PORT: "8090"
+    ports:
+      - "8090:8090"
+    volumes:
+      - submissions:/data/submissions
+    depends_on:
+      redis: { condition: service_healthy }
+
+  orchestrator:
+    build: { context: ., target: orchestrator-runtime }
+    command: /bin/orchestrator
+    environment:
+      REDIS_ADDR: redis:6379
+      DATA_DIR: /data/submissions
+      ARENA_NET: arena-net
+      SUB_CPUS: "1.0"
+      SUB_MEMORY: 512m
+      SUB_PIDS: "256"
+      SUB_CORES: "4" # host cores available to pin submissions onto (cpuset)
+    volumes:
+      - submissions:/data/submissions
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [default, arena]
+    depends_on:
+      redis: { condition: service_healthy }
+
+  # Scale out with: docker compose up -d --scale botfleet=8
+  botfleet:
+    build: { context: ., target: runtime }
+    command: /bin/botfleet
+    environment:
+      REDIS_ADDR: redis:6379
+    networks: [default, arena]
+    depends_on:
+      redis: { condition: service_healthy }
+
+  ingester:
+    build: { context: ., target: runtime }
+    command: /bin/ingester
+    environment:
+      REDIS_ADDR: redis:6379
+      PG_DSN: postgres://arena:arena@timescaledb:5432/arena
+    depends_on:
+      redis: { condition: service_healthy }
+
+networks:
+  default: {}
+  # Sandboxed submissions live here: fixed name so the orchestrator can attach
+  # raw `docker run` containers; internal -> no route to the internet.
+  arena:
+    name: arena-net
+    internal: true
+
+volumes:
+  submissions: {}
+  pgdata: {}

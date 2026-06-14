@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="IICPC ARENA - Live Telemetry and Benchmarking Dashboard">
+  <title>IICPC Hackathon — Live Benchmark Leaderboard</title>
+  
+  <style>
+    /* Google Fonts: JetBrains Mono for that hardcore engineering terminal aesthetic */
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
+
+    /* Core Design System Variables */
+    :root {
+      /* Increased base font size from 15px to 16px for better standard readability */
+      font-size: 16px; 
+      
+      /* Color Palette */
+      --bg: #04060a; 
+      --panel: rgba(13, 17, 25, 0.75); 
+      --panel-border: rgba(42, 60, 95, 0.4);
+      --line: #1d2740; 
+      --text: #e2e8f0; 
+      --dim: #94a3b8; /* Lightened slightly for better contrast */
+      
+      /* Status Colors */
+      --neon: #10b981; 
+      --neon-glow: rgba(16, 185, 129, 0.3);
+      --neon2: #3b82f6; 
+      --warn: #f59e0b; 
+      --bad: #ef4444;
+    }
+
+    * { box-sizing: border-box; margin: 0; }
+    
+    body {
+      background:
+        radial-gradient(1000px 600px at 80% 0%, rgba(29, 58, 115, 0.15), transparent),
+        radial-gradient(800px 500px at 10% 100%, rgba(16, 185, 129, 0.1), transparent),
+        var(--bg);
+      color: var(--text);
+      font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+      min-height: 100vh; 
+      padding: 32px clamp(16px, 5vw, 64px);
+      line-height: 1.6;
+    }
+
+    /* --- Header Layout --- */
+    header { 
+      display: flex; 
+      align-items: center; 
+      gap: 20px; 
+      flex-wrap: wrap; 
+      margin-bottom: 40px; 
+      border-bottom: 1px solid var(--panel-border);
+      padding-bottom: 20px;
+    }
+
+    h1 { 
+      font-size: 2rem; /* Increased */
+      letter-spacing: 0.1em; 
+      font-weight: 800;
+    }
+    
+    h1 .a { 
+      color: var(--neon); 
+      text-shadow: 0 0 12px var(--neon-glow); 
+    }
+    
+    .sub { 
+      color: var(--dim); 
+      font-size: 0.9rem; /* Increased */
+      letter-spacing: 0.05em; 
+      margin-top: 4px;
+    }
+
+    /* Live Connection Indicator */
+    .conn { 
+      margin-left: auto; 
+      font-size: 0.8rem; /* Increased */
+      padding: 8px 16px; 
+      border: 1px solid var(--line); 
+      border-radius: 6px; 
+      color: var(--dim); 
+      background: rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      transition: all 0.3s ease;
+    }
+
+    .conn::before {
+      content: "";
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--dim);
+    }
+
+    .conn.live { 
+      color: var(--text); 
+      border-color: var(--neon); 
+      box-shadow: 0 0 15px var(--neon-glow) inset; 
+    }
+    
+    .conn.live::before {
+      background: var(--neon);
+      box-shadow: 0 0 8px var(--neon);
+    }
+
+    /* --- Grid & Panel Layout --- */
+    .grid { 
+      display: grid; 
+      grid-template-columns: 2.2fr 1fr; 
+      gap: 24px; 
+    }
+    
+    @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+
+    section {
+      background: var(--panel);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--panel-border); 
+      border-radius: 12px; 
+      padding: 28px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    h2 { 
+      font-size: 0.95rem; /* Increased */
+      letter-spacing: 0.15em; 
+      color: var(--text); 
+      margin-bottom: 24px; 
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    
+    h2::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, var(--line), transparent);
+    }
+
+    /* --- Data Table --- */
+    .table-container { overflow-x: auto; }
+
+    table { 
+      width: 100%; 
+      border-collapse: collapse; 
+      font-size: 0.95rem; /* Increased */
+    }
+    
+    th { 
+      text-align: left; 
+      color: var(--dim); 
+      font-weight: 500; 
+      font-size: 0.8rem; /* Increased */
+      letter-spacing: 0.08em; 
+      padding: 12px 14px; 
+      border-bottom: 1px solid var(--line); 
+    }
+    
+    td { 
+      padding: 16px 14px; 
+      border-bottom: 1px solid rgba(29, 39, 64, 0.4); 
+      white-space: nowrap; 
+    }
+    
+    tr.row { transition: background 0.2s ease; }
+    tr.row:hover { background: rgba(25, 36, 64, 0.6); }
+
+    td.rank { color: var(--dim); width: 2.2em; font-weight: 700; }
+    
+    /* Highlight Top Performer */
+    tr.row:first-child td.rank { 
+      color: var(--warn); 
+      text-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+    }
+    tr.row:first-child td.team { color: #fff; }
+
+    td.team { font-weight: 700; }
+    td.name { color: var(--dim); max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
+    
+    .score { color: var(--text); font-weight: 700; }
+    
+    /* Visual Score Bar */
+    .bar { 
+      height: 6px; 
+      background: rgba(0,0,0,0.4); 
+      border-radius: 8px; 
+      margin-top: 8px; 
+      overflow: hidden; 
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+    
+    .bar i { 
+      display: block; 
+      height: 100%; 
+      background: linear-gradient(90deg, var(--neon2), var(--neon)); 
+      box-shadow: 0 0 10px var(--neon-glow);
+    }
+
+    /* Metric Color Coding */
+    .lat { color: var(--neon2); font-weight: 500; } 
+    .tps { color: var(--warn); font-weight: 500; }
+    .ok { color: var(--neon); } 
+    .meh { color: var(--warn); } 
+    .bad { color: var(--bad); }
+
+    /* --- Side Panel (Runs) --- */
+    .chip { 
+      display: inline-block; 
+      font-size: 0.7rem; /* Increased */
+      letter-spacing: 0.08em; 
+      padding: 4px 10px; 
+      border-radius: 4px; 
+      border: 1px solid var(--line); 
+      color: var(--dim); 
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .chip.queued    { color: var(--dim); background: rgba(100, 116, 139, 0.1); }
+    .chip.building  { color: var(--neon2); border-color: rgba(59, 130, 246, 0.4); background: rgba(59, 130, 246, 0.1); }
+    .chip.conformance, .chip.load { color: var(--warn); border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.1); animation: pulse 1.5s infinite alternate; }
+    .chip.done      { color: var(--neon); border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.1); }
+    .chip.failed    { color: var(--bad); border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.1); }
+    
+    @keyframes pulse { 
+      0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+      100% { box-shadow: 0 0 8px 2px rgba(245, 158, 11, 0); } 
+    }
+
+    .run { 
+      padding: 16px 12px; 
+      border-bottom: 1px solid rgba(29, 39, 64, 0.4); 
+      font-size: 0.9rem; /* Increased */
+      display: flex; 
+      flex-direction: column; 
+      gap: 10px; 
+      transition: background 0.2s;
+    }
+    .run:hover { background: rgba(25, 36, 64, 0.3); border-radius: 6px; }
+    .run:last-child { border-bottom: none; }
+    
+    .run .top { display: flex; gap: 12px; align-items: center; }
+    .run .id { color: var(--dim); font-size: 0.8rem; }
+    .run .live { color: var(--dim); font-size: 0.8rem; background: rgba(0,0,0,0.2); padding: 8px 12px; border-radius: 4px; border-left: 2px solid var(--neon2); }
+    .run .err { color: var(--bad); font-size: 0.8rem; white-space: pre-wrap; background: rgba(239, 68, 68, 0.1); padding: 10px; border-radius: 4px; border-left: 2px solid var(--bad); }
+    
+    /* Empty States */
+    .empty { 
+      color: var(--dim); 
+      font-size: 0.95rem; 
+      padding: 40px 10px; 
+      text-align: center;
+      background: rgba(0,0,0,0.2);
+      border-radius: 8px;
+      border: 1px dashed var(--line);
+    }
+    
+    footer { 
+      margin-top: 48px; 
+      color: var(--dim); 
+      font-size: 0.8rem; 
+      letter-spacing: 0.05em; 
+      text-align: center;
+      border-top: 1px solid var(--panel-border);
+      padding-top: 24px;
+    }
+
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1><span class="a">IICPC</span> HACKATHON</h1>
+    <div class="sub">Distributed trading-infrastructure benchmark | live telemetry</div>
+  </div>
+  <div class="conn" id="conn">CONNECTING...</div>
+</header>
+
+<main class="grid">
+  <section>
+    <h2>LEADERBOARD</h2>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>TEAM</th>
+            <th>ENGINE</th>
+            <th>SCORE</th>
+            <th>P50</th>
+            <th>P99</th>
+            <th>MAX TPS</th>
+            <th>CORRECT</th>
+          </tr>
+        </thead>
+        <tbody id="board"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="board-empty">No finished runs yet.<br><br>Fire one with <b style="color:var(--text)">make demo</b></div>
+  </section>
+
+  <section>
+    <h2>ACTIVE RUNS</h2>
+    <div id="runs"></div>
+    <div class="empty" id="runs-empty">System idling. No active runs.</div>
+  </section>
+</main>
+
+<footer>code upload &rarr; sandboxed deploy &rarr; bot-fleet bombardment &rarr; telemetry verdict &middot; IICPC Summer Hackathon 2026</footer>
+
+<script>
+  // DOM Utilities
+  const $ = id => document.getElementById(id);
+  
+  // Formatting Helpers
+  const fmtUs = us => us >= 1000 ? (us/1000).toFixed(1) + 'ms' : us + 'µs';
+  const fmtTps = t => t >= 1000 ? (t/1000).toFixed(1) + 'k' : Math.round(t);
+  const corrCls = c => c >= 0.999 ? 'ok' : c >= 0.97 ? 'meh' : 'bad';
+  
+  // Security: Escape HTML to prevent XSS from team names/engine names
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  // Renders the main leaderboard table
+  function renderBoard(rows) {
+    $('board-empty').style.display = rows.length ? 'none' : 'block';
+    $('board').innerHTML = rows.map(r => `
+      <tr class="row">
+        <td class="rank">${r.rank}</td>
+        <td class="team">${esc(r.team)}</td>
+        <td class="name">${esc(r.name)}</td>
+        <td>
+          <span class="score">${r.score.toFixed(1)}</span>
+          <div class="bar"><i style="width:${Math.min(100, r.score)}%"></i></div>
+        </td>
+        <td class="lat">${fmtUs(r.p50_us)}</td>
+        <td class="lat">${fmtUs(r.p99_us)}</td>
+        <td class="tps">${fmtTps(r.tps)}</td>
+        <td class="${corrCls(r.correctness)}">${(r.correctness*100).toFixed(2)}%</td>
+      </tr>`).join('');
+  }
+
+  // Renders the live monitoring side panel
+  function renderRuns(runs) {
+    $('runs-empty').style.display = runs.length ? 'none' : 'block';
+    $('runs').innerHTML = runs.map(r => {
+      const live = r.m_acked ? `acked ${r.m_acked} &middot; p99 ${fmtUs(+r.m_p99_us||0)} &middot; ${fmtTps(+r.m_tps||0)} tps &middot; viol ${r.m_violations||0}` : '';
+      return `
+        <div class="run">
+          <div class="top">
+            <span class="chip ${esc(r.status)}">${esc(r.status)}</span>
+            <b class="team">${esc(r.team||'?')}</b>
+            <span class="id">${esc(r.id)} &middot; ${r.bots} bots</span>
+            ${r.m_score ? `<span class="score" style="margin-left:auto">${(+r.m_score).toFixed(1)}</span>` : ''}
+          </div>
+          ${live ? `<div class="live">${live}</div>` : ''}
+          ${r.error ? `<div class="err">${esc(r.error)}</div>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  // WebSocket Connection with Exponential Backoff
+  let wsReconnectTimer = null;
+  function connect() {
+    const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+    const ws = new WebSocket(wsUrl);
+    
+    ws.onopen = () => { 
+      $('conn').textContent = 'LIVE'; 
+      $('conn').classList.add('live'); 
+      if (wsReconnectTimer) clearInterval(wsReconnectTimer);
+    };
+    
+    ws.onmessage = e => { 
+      try { 
+        renderBoard(JSON.parse(e.data)); 
+      } catch (err) {
+        console.error("Failed to parse incoming telemetry packet:", err);
+      } 
+    };
+    
+    ws.onclose = () => {
+      $('conn').textContent = 'RECONNECTING...'; 
+      $('conn').classList.remove('live');
+      wsReconnectTimer = setTimeout(connect, 2000);
+    };
+  }
+
+  // Fallback Polling (In case WS drops temporarily)
+  async function poll() {
+    try {
+      const [board, runs] = await Promise.all([
+        fetch('/api/leaderboard').then(r => r.json()),
+        fetch('/api/runs').then(r => r.json()),
+      ]);
+      renderBoard(board); 
+      renderRuns(runs);
+    } catch (err) {
+      console.warn("REST API polling failed, retaining previous state.");
+    }
+  }
+
+  // Initialization
+  connect();
+  poll();
+  setInterval(poll, 2500);
+</script>
+</body>
+</html>
